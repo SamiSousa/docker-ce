@@ -69,6 +69,7 @@ import (
 	"github.com/docker/libnetwork/netlabel"
 	"github.com/docker/libnetwork/osl"
 	"github.com/docker/libnetwork/types"
+	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
 )
 
@@ -870,7 +871,7 @@ addToStore:
 		}
 	}()
 
-	if len(network.loadBalancerIP) != 0 {
+	if network.hasLoadBalancerEndpoint() {
 		if err = network.createLoadBalancerSandbox(); err != nil {
 			return nil, err
 		}
@@ -1143,6 +1144,11 @@ func (c *controller) NewSandbox(containerID string, options ...SandboxOption) (S
 		}
 	}
 
+	if sb.osSbox != nil {
+		// Apply operating specific knobs on the load balancer sandbox
+		sb.osSbox.ApplyOSTweaks(sb.oslTypes)
+	}
+
 	c.Lock()
 	c.sandboxes[sb.id] = sb
 	c.Unlock()
@@ -1252,7 +1258,7 @@ func (c *controller) loadDriver(networkType string) error {
 	}
 
 	if err != nil {
-		if err == plugins.ErrNotFound {
+		if errors.Cause(err) == plugins.ErrNotFound {
 			return types.NotFoundErrorf(err.Error())
 		}
 		return err
