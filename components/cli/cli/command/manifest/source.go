@@ -1,8 +1,8 @@
 package manifest
 
 import (
-	"errors"
 	"context"
+	"errors"
 
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
@@ -171,12 +171,12 @@ func makeRepoDigest(man types.ImageManifest) (string, error) {
 		return "", err
 	}
 
-	namedDigest, err := reference.WithDigest(name, digest)
+	nameTagDigest, err := reference.WithDigest(name, digest)
 	if err != nil {
 		return "", err
 	}
 
-	return namedDigest.String(), nil
+	return nameTagDigest.String(), nil
 }
 
 func makeRepoDigestFromList(namedRef reference.Named, mans []types.ImageManifest) (string, error) {

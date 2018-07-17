@@ -21,11 +21,14 @@ import (
 
 // PullOptions defines what and how to pull
 type PullOptions struct {
-	remote    string
-	all       bool
-	platform  string
-	untrusted bool
-	source bool
+	remote    	string
+	all       	bool
+	platform  	string
+	untrusted 	bool
+	insecure 	bool
+	source 		bool
+	binary		bool
+	reference 	string
 }
 
 // NewPullCommand creates a new `docker pull` command
@@ -45,7 +48,10 @@ func NewPullCommand(dockerCli command.Cli) *cobra.Command {
 	flags := cmd.Flags()
 
 	flags.BoolVarP(&opts.all, "all-tags", "a", false, "Download all tagged images in the repository")
-	flags.BoolVar(&opts.source, "source", false, "Download source for specified image")
+	flags.BoolVar(&opts.insecure, "insecure", false, "Allow communication with an insecure registry")
+	flags.BoolVar(&opts.source, "source", false, "Download source for an image")
+	flags.BoolVar(&opts.binary, "binary", false, "Download binary for a source image")
+	flags.StringVar(&opts.reference, "reference", "", "Download a specified reference from an image. Eg 'source' or 'binary'")
 
 	command.AddPlatformFlag(flags, &opts.platform)
 	command.AddTrustVerificationFlags(flags, &opts.untrusted, dockerCli.ContentTrustEnabled())
@@ -60,9 +66,22 @@ func RunPull(cli command.Cli, opts PullOptions) error {
 	case err != nil:
 		return err
 	case opts.all && !reference.IsNameOnly(distributionRef):
-		return errors.New("tag can't be used with --all-tags/-a")
-	case opts.all && opts.source:
-		return errors.New("can't use --source with --all-tags/-a")
+		return errors.New("tag can't be used with --all-tags/-a")	
+	case opts.source && opts.binary:
+		return errors.New("can't use --source with --binary")
+	case opts.source && opts.reference != "":
+		return errors.New("--reference can't be used with --source")
+	case opts.binary && opts.reference != "":
+		return errors.New("--reference can't be used with --binary")
+	case opts.all && (opts.source || opts.binary || (opts.reference != "")):
+		switch {
+		case opts.source:
+			return errors.New("can't use --source with --all-tags/-a")
+		case opts.binary:
+			return errors.New("can't use --binary with --all-tags/-a")
+		case opts.reference != "":
+			return errors.New("can't use --reference with --all-tags/-a")
+		}
 	case !opts.all && reference.IsNameOnly(distributionRef):
 		distributionRef = reference.TagNameOnly(distributionRef)
 		if tagged, ok := distributionRef.(reference.Tagged); ok {
@@ -70,9 +89,14 @@ func RunPull(cli command.Cli, opts PullOptions) error {
 		}
 	}
 
-	// Check if source flag passed
+	// Check if a reference flag is passed
 	if opts.source {
-		return sourcePull(cli, distributionRef, opts)
+		opts.reference = "source"
+	} else if opts.binary {
+		opts.reference = "binary"
+	}
+	if opts.reference != "" {
+		return referencePull(cli, distributionRef, opts)
 	}
 
 	ctx := context.Background()
@@ -97,19 +121,19 @@ func RunPull(cli command.Cli, opts PullOptions) error {
 	return nil
 }
 
-// sourcePull attempts to pull the image source code based on the manifest list
-func sourcePull(cli command.Cli, namedRef reference.Named, opts PullOptions) error {
+// referencePull attempts to pull an image reference in the manifest list
+func referencePull(cli command.Cli, namedRef reference.Named, opts PullOptions) error {
 	platform := opts.platform
 	if platform == "" {
 		platform = runtime.GOOS + "/" + runtime.GOARCH
 	}
 
-	manifest, err := getSourceManifest(cli, namedRef, platform)
+	manifest, err := getImageManifest(cli, namedRef, platform, opts.insecure)
 	if err != nil {
 		return err
 	}
 
-	repoDigest, err := getSourceRepoDigest(manifest, platform)
+	repoDigest, err := getReferenceRepoDigest(manifest, platform, opts.reference)
 	if err != nil {
 		return err
 	}
@@ -121,14 +145,19 @@ func sourcePull(cli command.Cli, namedRef reference.Named, opts PullOptions) err
 		platform: 	opts.platform,
 		untrusted: 	opts.untrusted,
 		source:		false,
+		binary:		false,
+		reference:	"",
+		insecure:	opts.insecure,
 	}
 
 	return RunPull(cli, srcOptions)
 }
 
-func getSourceManifest(cli command.Cli, namedRef reference.Named, platform string) (manifestlist.ManifestDescriptor, error) {
+func getImageManifest(cli command.Cli, namedRef reference.Named, platform string, insecure bool) (manifestlist.ManifestDescriptor, error) {
 	ctx := context.Background()
-	registryClient := cli.RegistryClient(false) // TODO: add flag to PullOptions to allow pulling manifest lists from insecure registries
+
+	// TODO: add flag to PullOptions to allow pulling manifest lists from insecure registries
+	registryClient := cli.RegistryClient(insecure)
 
 	// Check remote manifest list
 	manifestList, err := registryClient.GetManifestList(ctx, namedRef)
@@ -163,16 +192,16 @@ func getSourceManifest(cli command.Cli, namedRef reference.Named, platform strin
 	return manifestlist.ManifestDescriptor{}, errors.New("no match for platform " + platform)
 }
 
-func getSourceRepoDigest(descriptor manifestlist.ManifestDescriptor, platform string) (string, error) {
-	// Obtain RepoDigest for source image
-	// TODO: For now it uses the "os-features" field to store the link to source. Eventually this should change
+func getReferenceRepoDigest(descriptor manifestlist.ManifestDescriptor, platform string, reference string) (string, error) {
+	// Obtain RepoDigest for reference image
+	// TODO: For now it uses the "os-features" field to store the reference. Eventually this should change
 	for _, entry := range descriptor.Platform.OSFeatures {
-		if strings.HasPrefix(entry, "source:") {
-			return strings.TrimPrefix(entry, "source:"), nil
+		if strings.HasPrefix(entry, reference + ":") {
+			return strings.TrimPrefix(entry, reference + ":"), nil
 		}
 	}
 
-	return "", errors.New("no source image for platform " + platform)
+	return "", errors.New("no reference " + reference + " for platform " + platform)
 }
 
 func buildManifestDescriptor(targetRepo *registry.RepositoryInfo, imageManifest types.ImageManifest) (manifestlist.ManifestDescriptor, error) {
