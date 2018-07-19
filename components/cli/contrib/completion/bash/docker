@@ -5110,6 +5110,7 @@ _docker() {
 	local experimental_commands=(
 		checkpoint
 		deploy
+		manifest
 	)
 
 	local commands=(${management_commands[*]} ${top_level_commands[*]})
