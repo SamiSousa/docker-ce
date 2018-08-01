@@ -45,8 +45,22 @@ func newSourceListCommand(dockerCli command.Cli) *cobra.Command {
 	return cmd
 }
 
+func CreateSourceManifestList(dockerCli command.Cli, binaryImage string, sourceImage string) error {
+	// Create a manifest list with source reference
+	opts := sourceOpts{
+		amend: false,
+		insecure: false,
+		image: binaryImage,
+		source: sourceImage,
+		only_binary: true,
+		manifest_list: "",
+		source_list: "",
+	}
+
+	return sourceManifestList(dockerCli, opts)
+}
+
 func sourceManifestList(dockerCli command.Cli, opts sourceOpts) error {
-	
 	// Verify that each image exists in the registry,
 	// while getting the RepoDigests for each image
 	imageRepoDigest, err := getRepoDigest(dockerCli, opts.image, opts.manifest_list, opts)

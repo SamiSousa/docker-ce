@@ -62,6 +62,17 @@ func newPushListCommand(dockerCli command.Cli) *cobra.Command {
 	return cmd
 }
 
+func PushManifestList(dockerCli command.Cli, manifestList string) error {
+	// Push a manifest list
+	opts := pushOpts{
+		insecure: false,
+		purge: true,
+		target: manifestList,
+	}
+	
+	return runPush(dockerCli, opts)
+}
+
 func runPush(dockerCli command.Cli, opts pushOpts) error {
 
 	targetRef, err := normalizeReference(opts.target)

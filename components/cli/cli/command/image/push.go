@@ -5,6 +5,7 @@ import (
 
 	"github.com/docker/cli/cli"
 	"github.com/docker/cli/cli/command"
+	"github.com/docker/cli/cli/command/manifest"
 	"github.com/docker/distribution/reference"
 	"github.com/docker/docker/pkg/jsonmessage"
 	"github.com/docker/docker/registry"
@@ -14,6 +15,7 @@ import (
 type pushOptions struct {
 	remote    string
 	untrusted bool
+	source	  string
 }
 
 // NewPushCommand creates a new `docker push` command
@@ -32,6 +34,8 @@ func NewPushCommand(dockerCli command.Cli) *cobra.Command {
 
 	flags := cmd.Flags()
 
+	flags.StringVar(&opts.source, "source", "", "Also push and add a source image reference to the main image")
+
 	command.AddTrustSigningFlags(flags, &opts.untrusted, dockerCli.ContentTrustEnabled())
 
 	return cmd
@@ -39,6 +43,11 @@ func NewPushCommand(dockerCli command.Cli) *cobra.Command {
 
 // RunPush performs a push against the engine based on the specified options
 func RunPush(dockerCli command.Cli, opts pushOptions) error {
+	if opts.source != "" {
+		// Push the image and the source
+		return sourceRefPush(dockerCli, opts)
+	}
+
 	ref, err := reference.ParseNormalizedNamed(opts.remote)
 	if err != nil {
 		return err
@@ -67,4 +76,44 @@ func RunPush(dockerCli command.Cli, opts pushOptions) error {
 
 	defer responseBody.Close()
 	return jsonmessage.DisplayJSONMessagesToStream(responseBody, dockerCli.Out(), nil)
+}
+
+func sourceRefPush(dockerCli command.Cli, opts pushOptions) error {
+	// Check each reference for validity before pushing
+	_, err := reference.ParseNormalizedNamed(opts.remote)
+	if err != nil {
+		return err
+	}
+
+	_, err = reference.ParseNormalizedNamed(opts.source)
+	if err != nil {
+		return err
+	}
+
+	// Push each image
+	pushOpts := pushOptions{
+		remote: opts.remote,
+		untrusted: opts.untrusted,
+		source: "",
+	}
+
+	err = RunPush(dockerCli, pushOpts)
+	if err != nil {
+		return err
+	}
+
+	pushOpts.remote = opts.source
+	err = RunPush(dockerCli, pushOpts)
+	if err != nil {
+		return err
+	}
+
+	// Create manifest list to link together image and source
+	err = manifest.CreateSourceManifestList(dockerCli, opts.remote, opts.source)
+	if err != nil {
+		return err
+	}
+
+	// Push manifest list
+	return manifest.PushManifestList(dockerCli, opts.remote)
 }
