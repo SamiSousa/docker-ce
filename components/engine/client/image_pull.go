@@ -33,6 +33,14 @@ func (cli *Client) ImagePull(ctx context.Context, refStr string, options types.I
 	if options.Platform != "" {
 		query.Set("platform", strings.ToLower(options.Platform))
 	}
+	if !options.PullImage && !options.PullSource {
+		// Default is to pull the image, since we have to pull something
+		query.Set("pullimage", "true")
+		query.Set("pullsource", "false")
+	} else {
+		query.Set("pullimage", strconv.FormatBool(options.PullImage))
+		query.Set("pullsource", strconv.FormatBool(options.PullSource))
+	}
 
 	resp, err := cli.tryImageCreate(ctx, query, options.RegistryAuth)
 	if resp.statusCode == http.StatusUnauthorized && options.PrivilegeFunc != nil {

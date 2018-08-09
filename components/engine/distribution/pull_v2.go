@@ -40,6 +40,11 @@ import (
 var (
 	errRootFSMismatch = errors.New("layers from manifest don't match image configuration")
 	errRootFSInvalid  = errors.New("invalid rootfs in image configuration")
+	// sourcePlatform matches a source image entered into the manifest list
+	sourcePlatform    = *specs.Platform{
+		Architecture: "source",
+		OS: "source",
+	}
 )
 
 // ImageConfigPullError is an error pulling the image config blob
@@ -385,6 +390,8 @@ func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named, platform 
 	var (
 		id             digest.Digest
 		manifestDigest digest.Digest
+		sourceId             digest.Digest
+		sourceManifestDigest digest.Digest
 	)
 
 	switch v := manifest.(type) {
@@ -392,19 +399,33 @@ func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named, platform 
 		if p.config.RequireSchema2 {
 			return false, fmt.Errorf("invalid manifest: not schema2")
 		}
+		if p.config.PullSource {
+			return false, fmt.Errorf("cannot pull source image from image manifest")
+		}
 		id, manifestDigest, err = p.pullSchema1(ctx, ref, v, platform)
 		if err != nil {
 			return false, err
 		}
 	case *schema2.DeserializedManifest:
+		if p.config.PullSource {
+			return false, fmt.Errorf("cannot pull source image from image manifest")
+		}
 		id, manifestDigest, err = p.pullSchema2(ctx, ref, v, platform)
 		if err != nil {
 			return false, err
 		}
 	case *manifestlist.DeserializedManifestList:
-		id, manifestDigest, err = p.pullManifestList(ctx, ref, v, platform)
-		if err != nil {
-			return false, err
+		if p.config.PullImage {
+			id, manifestDigest, err = p.pullManifestList(ctx, ref, v, platform)
+			if err != nil {
+				return false, err
+			}
+		}
+		if p.config.PullSource {
+			sourceId, sourceManifestDigest, err = p.pullManifestList(ctx, ref, v, sourcePlatform)
+			if err != nil {
+				return false, err
+			}
 		}
 	default:
 		return false, invalidManifestFormatError{}
@@ -413,26 +434,50 @@ func (p *v2Puller) pullV2Tag(ctx context.Context, ref reference.Named, platform 
 	progress.Message(p.config.ProgressOutput, "", "Digest: "+manifestDigest.String())
 
 	if p.config.ReferenceStore != nil {
-		oldTagID, err := p.config.ReferenceStore.Get(ref)
-		if err == nil {
-			if oldTagID == id {
-				return false, addDigestReference(p.config.ReferenceStore, ref, manifestDigest, id)
+		if p.config.PullImage {
+			if tagUpdated, err = p.storeImage(ref, id, manifestDigest); err != nil {
+				return tagUpdated, err
 			}
-		} else if err != refstore.ErrDoesNotExist {
+		}
+		if p.config.PullSource {
+			// Add "-source" to the end of the source ref name to differentiate from the binary image
+			// Use the same tag as the binary image
+			var sourceRef reference.Named
+			sourceName := ref.Name() + "-source"
+			if tagged, isTagged := ref.(reference.NamedTagged); isTagged {
+				sourceRef = Parse(sourceName + ":" + tagOrDigest)
+			} else {
+				sourceRef = Parse(sourceName)
+			}
+
+			if tagUpdated, err = p.storeImage(sourceRef, sourceId, sourceManifestDigest); err != nil {
+				return tagUpdated, err
+			}
+		}
+	}
+	return true, nil
+}
+
+func (p *v2Puller) storeImage(ref reference.Named, id, manifestDigest digest.Digest) (bool, error) {
+	oldTagID, err := p.config.ReferenceStore.Get(ref)
+	if err == nil {
+		if oldTagID == id {
+			return false, addDigestReference(p.config.ReferenceStore, ref, manifestDigest, id)
+		}
+	} else if err != refstore.ErrDoesNotExist {
+		return false, err
+	}
+
+	if canonical, ok := ref.(reference.Canonical); ok {
+		if err = p.config.ReferenceStore.AddDigest(canonical, id, true); err != nil {
 			return false, err
 		}
-
-		if canonical, ok := ref.(reference.Canonical); ok {
-			if err = p.config.ReferenceStore.AddDigest(canonical, id, true); err != nil {
-				return false, err
-			}
-		} else {
-			if err = addDigestReference(p.config.ReferenceStore, ref, manifestDigest, id); err != nil {
-				return false, err
-			}
-			if err = p.config.ReferenceStore.AddTag(ref, id, true); err != nil {
-				return false, err
-			}
+	} else {
+		if err = addDigestReference(p.config.ReferenceStore, ref, manifestDigest, id); err != nil {
+			return false, err
+		}
+		if err = p.config.ReferenceStore.AddTag(ref, id, true); err != nil {
+			return false, err
 		}
 	}
 	return true, nil

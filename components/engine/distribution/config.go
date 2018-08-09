@@ -62,6 +62,10 @@ type ImagePullConfig struct {
 	Schema2Types []string
 	// Platform is the requested platform of the image being pulled
 	Platform *specs.Platform
+	// PullImage and PullSource request pulling the image itself,
+	// its source image, or both
+	PullImage bool
+	PullSource bool
 }
 
 // ImagePushConfig stores push configuration.

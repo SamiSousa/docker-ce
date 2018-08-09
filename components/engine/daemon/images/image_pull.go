@@ -20,7 +20,7 @@ import (
 
 // PullImage initiates a pull operation. image is the repository name to pull, and
 // tag may be either empty, or indicate a specific tag to pull.
-func (i *ImageService) PullImage(ctx context.Context, image, tag string, platform *specs.Platform, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer) error {
+func (i *ImageService) PullImage(ctx context.Context, image, tag string, platform *specs.Platform, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer, pullImage, pullSource bool) error {
 	start := time.Now()
 	// Special case: "pull -a" may send an image name with a
 	// trailing :. This is ugly, but let's not break API
@@ -46,12 +46,12 @@ func (i *ImageService) PullImage(ctx context.Context, image, tag string, platfor
 		}
 	}
 
-	err = i.pullImageWithReference(ctx, ref, platform, metaHeaders, authConfig, outStream)
+	err = i.pullImageWithReference(ctx, ref, platform, metaHeaders, authConfig, outStream, pullImage, pullSource)
 	imageActions.WithValues("pull").UpdateSince(start)
 	return err
 }
 
-func (i *ImageService) pullImageWithReference(ctx context.Context, ref reference.Named, platform *specs.Platform, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer) error {
+func (i *ImageService) pullImageWithReference(ctx context.Context, ref reference.Named, platform *specs.Platform, metaHeaders map[string][]string, authConfig *types.AuthConfig, outStream io.Writer, pullImage, pullSource bool) error {
 	// Include a buffer so that slow client connections don't affect
 	// transfer performance.
 	progressChan := make(chan progress.Progress, 100)
@@ -79,6 +79,8 @@ func (i *ImageService) pullImageWithReference(ctx context.Context, ref reference
 		DownloadManager: i.downloadManager,
 		Schema2Types:    distribution.ImageTypes,
 		Platform:        platform,
+		PullImage:		 pullImage,
+		PullSource:		 pullSource,
 	}
 
 	err := distribution.Pull(ctx, ref, imagePullConfig)
